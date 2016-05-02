@@ -1,0 +1,1263 @@
+---
+title: "Figure SkateR_FINAL Project"
+output: html_document
+---
+####Authors: Chrystal Chan, Na Guo, Lucy Sun
+
+#Introduction
+The Moneyball project inspired us to look at hidden factors that can be used to improve the performance of a sports player or team. The 2016 figure skating world championships was recently held in Boston at TD garden, which sparked our interest in this particular sport. Audience members would hold their breath at each jump or spin performed by the skaters, and the final results of each skater seem to be very unpredictable until the end of their performance. That led us to wonder, can the results of a sport as artistic as figure skating be predicted using past data? The International Skating Union is an international authoritative organization with public records on previous championship results as well as information on every individual who participated in any one of the worldwide events for figure skating. The ICU website gives us access to reliable data about skaters’ demographics, scores, rankings in the past and so on since 2008.  We would like to apply what we have learned in data science to the field of figure skating in order to explore data from these professional competitions and predict the performance of skaters in competitions. 
+
+##Overview on Loading Data
+We used the ISU websites to download our datasets.
+
+There are 3 types of data we used:
+
+1. Season Best Score - which includes information on each skater's seasonal best score across all events. 
+
+Example: http://www.isuresults.com/isujsstat/sb2015-16/sbtsmto.htm
+
+2. Event Result - which gives the score breakdown for each skater per competition.
+Due to the large number of skating competitions each year, we restricted our event result data to the top 4 skating competitions:
+  Four Continents Figure Skating Championships
+  European Figure Skating Championships
+  World Figure Skating Championships
+  Grand Prix of Figure Skating Series
+  
+Example: http://www.isuresults.com/results/fc2009/SEG001.HTM
+
+3. Skater Biography - which includes biography data for each skater
+
+Example: http://www.isuresults.com/bios/isufs00007684.htm
+
+For figure skating, we have 4 categories:
+m - men
+l - ladies
+p - pair
+d - ice dance
+
+Most of our analysis will focus on single events data for men and ladies.
+We decided to exclude pairs data because after loading the initial data, we realized that the sample size for pairs data is too small. Also, we would have needed to consider a lot more variables for the analysis of pairs data. Ex. if female skater is shorter than her male partner. However, we did still include doubles data in our descriptive analysis of the datasets. 
+We excluded ice dance because the scoring rule is very different from other categories. Also there was a change in the judging system a few years ago, so we did not have enough historical data for this category.
+
+
+##Overview of Data Wrangling
+After scrapping the datasets from the ISU website, we wrangled the raw data to create clean and useful datasets for our analysis. 
+After cleaning the bio data, we kept only the variables that are useful for our analysis, including country, date of birth, height, and start_career. We also added new columns for continent, number of skaters in the country they're from, and quintiles ranking countries by number of skaters. All other bio data were qualitative and would have been too difficult to run analysis on. 
+After cleaning the event results data, we turned the dataset from a long format where short program and free skate results were in separate rows, to a wide format where the results are in the same row. We also added columns for total score. 
+Then we combined the biography data with the event results data and season best score data. Finally we added a new variable to our datasets indicating the ranking for each skater by quintiles for the entire year in the season best score data, and for each competition for event results data. 
+After the data was loaded and wrangled, we saved all the datasets that are to be used as Final datasets.RData. The code to scrape and wrangle the data is included in the rscript called FINAL data loading and wrangling R code.R. In this document, we will start by uploading the cleaned datasets. 
+
+```{r,message=FALSE}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(readr)
+library(countrycode)
+library(knitr)
+library(stats)
+library(broom)
+
+```
+
+Loading already scraped and wrangled datasets
+```{r}
+load("/Users/NathalieGuo/Downloads/FINAL datasets.RData")
+
+```
+
+#Summary Statistics
+For our exploratory analysis, we looked at different variables from our biography dataset and how they relate to Season Best Scores, and individual event scores. 
+
+##Country
+Our data consists of information on skaters from 72 countries in 5 continents. 
+```{r}
+return(c(length(unique(bio$country)),length(unique(bio$continent))))
+```
+
+We first want to know the distribution of the number of skaters in each country across the years. Based on our graphs, we can see that USA, Canada, and Russia are the top three countries where the greatest number of skaters are from. This makes sense as ice skating is one of the more popular sports in those countries. We ranked countries into quintiles based on number of skaters from that country, and used the country rank variable later in our regression analysis as a predictor for skater scores.
+
+```{r,warning=FALSE,message=FALSE}
+bio %>% filter(category=="m"&num_quintile%in%c("80~100%","60~80%")) %>% 
+  ggplot(aes(x=reorder(country,-numofskater),y=numofskater,fill=continent))+
+  geom_bar(stat="identity")+xlab("Country")+ylab("number of male single skaters") +
+  ggtitle('Number of Male Skaters by Country')
+
+bio %>% filter(category=="l"&num_quintile%in%c("80~100%","60~80%")) %>% 
+  ggplot(aes(x=reorder(country,-numofskater),y=numofskater,fill=continent))+
+  geom_bar(stat="identity")+xlab("Country")+ylab("number of female single skaters") +
+  ggtitle('Number of Female Skaters by Country')
+```
+
+We looked at which countries had the highest number of skaters, as well as which countries had the highest Season Best Scores. If we look at the mean scores throughout the years, we see that Russia has the highest average Season Best Score for ladies. Uzbekistan has highest average Season Best Score in men. China has the highest average Season Best Score for pairs. USA has the highest number of skaters participating in both single and doubles events.
+
+```{r}
+data <- SeasonBestScoreSingle.df %>%
+  group_by(program_type,category, country) %>%
+  summarise(count = n(), score_mean = mean(score), score_sd = sd(score)) %>%
+  mutate(group = paste(category,program_type))  
+
+#country with maximum scores
+maxScoreSingle.df <- do.call(rbind,lapply(split(data,data$group),function(chunk) chunk[which.max(chunk$score_mean),]))
+maxScoreSingle.df
+
+
+#country with maximum count
+maxCountSingle.df <- do.call(rbind,lapply(split(data,data$group),function(chunk) chunk[which.max(chunk$count),]))
+maxCountSingle.df
+
+data <- SeasonBestScoreDouble.df %>%
+  group_by(program_type,category, country) %>%
+  summarise(count = n(), score_mean = mean(score), score_sd = sd(score)) %>%
+  mutate(group = paste(category,program_type)) 
+  
+#country with maximum scores
+maxScoreDouble.df <-  do.call(rbind,lapply(split(data,data$group),function(chunk) chunk[which.max(chunk$score_mean),]))
+maxScoreDouble.df 
+  
+#country with maximum count
+maxCountDouble.df <-   do.call(rbind,lapply(split(data,data$group),function(chunk) chunk[which.max(chunk$count),]))  
+maxCountDouble.df
+```
+
+
+We compared Season Best Scores for the countries with the highest number of skaters (ie. Japan, USA, Russia, and Canada), to all other countries. The graphs show that there is a significant difference in Season Best Scores between these countries. Suggesting that country of origin may be a significant predictor for a skater’s scores.
+
+```{r}
+plot.df <-
+  SeasonBestScoreSingle.df %>%
+  filter(program_type =="to") %>%
+  mutate(display_country=ifelse(country  %in% c("RUS","USA", "CAN","JPN") , country, "other countries"))%>% 
+    group_by(category, display_country,season_start_year) %>%
+    summarize(score = mean(score), count = n()
+    )
+
+ggplot(plot.df ,aes(x=season_start_year,y=score)) + 
+    geom_point(aes(color=display_country,group=display_country, size = count))+ 
+    facet_wrap(~category, scales = "free") + 
+    xlab("season start year") +ylab("mean score by country")  +
+    ggtitle("SBS for Singles by Country")
+
+plot.df <-
+  SeasonBestScoreDouble.df %>%
+  filter(program_type =="to") %>%
+  mutate(display_country=ifelse(country  %in% c("RUS","USA", "CAN","JPN") , country, "other countries"))%>% 
+    group_by(category, display_country,season_start_year) %>%
+    summarize(score = mean(score), count = n()
+    )
+
+ggplot(plot.df ,aes(x=season_start_year,y=score)) + 
+    geom_point(aes(color=display_country,group=display_country, size = count))+ 
+    facet_wrap(~category, scales = "free") + 
+    xlab("season start year") +ylab("mean score by country")  +
+    ggtitle("SBS for Doubles by Country")
+
+
+```
+
+
+Based on these results, we determined that country of origin could be a potential variable for predicting a skater's performance. 
+
+##Height
+Next we were interested in including height as a potential variable for prediction, so looked at the distribution of height by gender. When we used qqnorm and qqline to check the normality of the distributions, we found that the height of female skaters is normally distributed, however, the height of male skaters is a little left-skewed. 
+
+```{r,warning=FALSE,message=FALSE}
+bio %>% filter(is.na(height)==FALSE) %>% ggplot(aes(height)) +
+  geom_histogram()+facet_grid(.~category)+stat_bin(bins=30) +
+  ggtitle('Heights by Gender')
+
+bio %>% filter(is.na(height)==FALSE) %>% 
+  ggplot(aes(continent,height,color=continent)) +
+  geom_boxplot()+ facet_grid(.~category) +
+  ggtitle('Heights by Gender')
+
+```
+
+
+##Gender/Categories
+Next, we looked at the distribution of Season Best Scores and Event Scores by categories: Men Singles, Ladies Singles, Pairs, Ice Dancing.
+
+```{r,message=FALSE}
+  #let see if the year distribution is the same
+  plot.df <- SeasonBestScoreSingle.df %>%
+    filter(program_type == "to") %>%
+    mutate(group = paste(category,program_type))  
+  
+  ggplot(filter(plot.df,category == "m") ,aes(score)) + 
+    geom_histogram()+ 
+    facet_wrap(~season_start_year, scales = "fixed") + 
+    ggtitle("Season Best Score Distribution for every year for men total score")
+  
+  qqnorm(filter(plot.df,category == "m"&season_start_year==2015)$score)
+  qqline(filter(plot.df,category == "m"&season_start_year==2015)$score)
+   
+  ggplot(filter(plot.df,category == "l") ,aes(score)) + 
+    geom_histogram()+ 
+    facet_wrap(~season_start_year, scales = "fixed") + 
+    ggtitle("Season Best Score Distribution for every year for ladies total score") 
+  
+
+  qqnorm(filter(plot.df,category == "l"&season_start_year==2015)$score)
+  qqline(filter(plot.df,category == "l"&season_start_year==2015)$score)
+  
+plot.df <- SeasonBestScoreDouble.df %>%
+  filter(program_type == "to") %>%
+  mutate(group = paste(category,program_type))  
+
+ggplot(filter(plot.df,category == "p") ,aes(score)) + 
+  geom_histogram()+ 
+  facet_wrap(~season_start_year, scales = "fixed") + 
+  ggtitle("Season Best Score Distribution for every year for pair program total score")
+
+qqnorm(filter(plot.df,category == "p"&season_start_year==2015)$score)
+qqline(filter(plot.df,category == "p"&season_start_year==2015)$score)
+
+ggplot(filter(plot.df,category == "d") ,aes(score)) + 
+  geom_histogram()+ 
+  facet_wrap(~season_start_year, scales = "fixed") + 
+  ggtitle("Season Best Score Distribution for every year for ice dancing total score") 
+
+
+qqnorm(filter(plot.df,category == "d"&season_start_year==2015)$score)
+qqline(filter(plot.df,category == "d"&season_start_year==2015)$score)
+```
+
+For men, we can see that the distribution of Season Best Score is fairly normal across the years. With the average increasing over the years.
+
+For ladies, the SBS distribution in earlier years are more right skewed, but have become more normally distribution since 2012. However from the QQ plot, we can see that tails still do not follow a normal distribution as well the men's distribution do. 
+
+For both pairs and ice dancing, the SBS distribution do not follow normality, as seen on the QQ plot. There are many "gaps" in the distribution. However, the lack of normal distribution could be due to the fact that pairs and ice dance have fewer skaters than men singles and ladies singles.
+
+Looking at average individual event scores over the years by gender, we can see that men consistently score higher than women. 
+```{r}
+single_gender<-EventResultSingle_wr%>%
+  group_by(program_type,category,season_start_year)%>%
+  summarize(TSS=mean(TSS,na.rm=TRUE),TES=mean(TES,na.rm=TRUE),PCS=mean(PCS,na.rm=TRUE),
+            SS=mean(SS,na.rm=TRUE),TR=mean(TR,na.rm=TRUE),PE=mean(PE,na.rm=TRUE),
+            CH=mean(CH,na.rm=TRUE),IN=mean(IN,na.rm=TRUE))
+
+single_gender%>%
+  ggplot(aes(x=season_start_year,y=TSS,group=category,color=category))+
+  geom_line()+geom_point()+ggtitle('TSS Scores by Gender')+facet_wrap(~program_type)+ 
+  scale_x_continuous(breaks=c(seq(2005,2015, by=2)))
+
+```
+
+These results suggest that we should run separate predictive models for Men and Women. 
+
+##Score Breakdowns
+To understand the score breakdown, each competition includes scores for two events, Short Program and Free Skate. For each event, there's a total score (TSS) which is a sum of the total elements score (TES), and the program component score (PCS). The program component score includes scores for 5 individual component: skating skills (SS), Transitions (TR), Performance/Execution (PE), Choreography / Composition (CH), and Interpretation (IN). Each component is marked with a value from 0 to 10 in 0.25 increments. These five marks are then multiplied by a factor depending on the type of program and level. For senior ladies and pairs, the factor is 0.8 for the short program and 1.6 for the long program. This means that PCS is more important in the long program.
+*Note:Since we will not focus on ice dance, we will not look at free dance (fd) and short dance (sd).
+
+Source: http://gofigureskating.com/compete/scoring.html
+
+###Season Best Scores
+Please note that we only have SBS for "Short Program" and "Free Skating" since 2011.
+
+```{r,message=FALSE,warning=FALSE}
+
+ggplot(data= filter(SeasonBestScoreSingle.df, season_start_year >= 2011) ,aes(x=category,y=score))+
+  geom_boxplot(aes(color=category))  +ggtitle("SBS for Singles") +xlab("score type") +ylab("SBS")  + 
+ facet_wrap(~program_type, scales = "fixed")
+
+ggplot(data= filter(SeasonBestScoreDouble.df, season_start_year >= 2011) ,aes(x=program_type,y=score))+
+  geom_boxplot(aes(color=program_type))  +ggtitle("SBS for Doubles") +xlab("score type") +ylab("SBS")  + 
+ facet_wrap(~category, scales = "fixed")
+
+```
+
+Overall, we saw that free skating has higher SBS than short program for each category. 
+
+```{r,message=FALSE,warning=FALSE}
+#create a combination table
+todata <- 
+  SeasonBestScoreSingle.df%>%
+  filter(program_type == "to") %>%
+  mutate(event_to = event, date_to= date, score_to = score) %>%
+  select (first_name, last_name, country, season_start_year, category, event_to, date_to, score_to)
+  
+fsdata <- 
+  SeasonBestScoreSingle.df%>%
+  filter(program_type == "fs") %>%
+  mutate(event_fs = event, date_fs= date, score_fs = score) %>%
+  select (first_name, last_name, country, season_start_year,category, event_fs, date_fs, score_fs)  
+  
+spdata <- 
+  SeasonBestScoreSingle.df%>%
+  filter(program_type == "sp") %>%
+  mutate(event_sp = event, date_sp= date, score_sp = score) %>%
+  select (first_name, last_name, country, season_start_year,category, event_sp, date_sp, score_sp)  
+
+
+
+alldata <- full_join(todata, fsdata)
+alldata <- full_join(alldata,spdata)
+
+data<- alldata %>%
+  filter(season_start_year >= 2011) %>%
+  filter(!is.na(score_fs)&!is.na(score_sp)) %>%
+  mutate(sameEventForFSandSP = ifelse(event_fs==event_sp, TRUE, FALSE)) %>%
+  mutate (score_diff = score_fs - score_sp)
+
+
+plot.df <- 
+  data %>%
+  group_by(season_start_year, category, sameEventForFSandSP) %>%
+  summarise(count= n(), score_to_mean = mean(score_to) )
+
+ggplot(plot.df ,aes(x=season_start_year,y=score_to_mean)) + 
+  geom_line(aes(color=sameEventForFSandSP,group=sameEventForFSandSP))+ 
+  facet_wrap(~category, scales = "free") + 
+  ggtitle("Skaters who have SBS from same event vs. not")  +xlab("season start year") +ylab("mean SBS total score")
+
+```
+
+We can see that in general skaters who have their Season Best Scores for free skating and short program from different events usually have higher total Season Best Scores.
+
+###Event Scores
+We looked at Program Component Scores, Total Elements Scores, and Total Scores over the years for each of the four competitions in the data set. Based on the graphs, we can see that GPF consistently has the highest scores, followed by World Championships, European Championships, and Four Continents.
+```{r}
+#Scores over the year by event
+singles_scores<-EventResultSingle_wr%>%
+  group_by(program_type,event_code,season_start_year)%>%
+  summarize(TSS=mean(TSS,na.rm=TRUE),TES=mean(TES,na.rm=TRUE),PCS=mean(PCS,na.rm=TRUE),
+            SS=mean(SS,na.rm=TRUE),TR=mean(TR,na.rm=TRUE),PE=mean(PE,na.rm=TRUE),
+            CH=mean(CH,na.rm=TRUE),IN=mean(IN,na.rm=TRUE))
+
+singles_scores%>%
+  ggplot(aes(x=season_start_year,y=TSS,group=event_code,color=event_code))+
+  geom_line()+geom_point()+ggtitle('TSS Scores')+facet_wrap(~program_type) + 
+  scale_x_continuous(breaks=c(seq(2005,2015, by=2)))
+
+singles_scores%>%
+ggplot(aes(x=season_start_year,y=TES,group=event_code,color=event_code))+
+  geom_line()+geom_point()+ggtitle('TES Scores')+facet_wrap(~program_type)+ 
+  scale_x_continuous(breaks=c(seq(2005,2015, by=2)))
+
+singles_scores%>%
+  ggplot(aes(x=season_start_year,y=PCS,group=event_code,color=event_code))+
+  geom_line()+geom_point()+ggtitle('PCS Scores')+facet_wrap(~program_type)+ 
+  scale_x_continuous(breaks=c(seq(2005,2015, by=2)))
+
+```
+
+Below is a summary of the average number events per skater, as well as number of participants for each event by gender. We can see that the Grand Prix Final has a lot fewer participants than the other competitions. This is because the Grand Prix Final is a cumulation of the ISU Grand Prix of Figure Skating series, which consists of the Skate America, Skate Canada International, Trophee Eric Bompard, Cup of China, Cup of Russia, and NHK Trophy competitions.  Only the top 6 skaters from each discipline go on to compete in the final.
+
+```{r}
+length(unique(EventResultSingle_wr$full_name))
+#686 total number of single's event attendents
+
+#looking at events per skater
+Unique_events<-EventResultSingle_wr%>%group_by(full_name)%>%
+  summarize(events=length(event_year))
+summary(Unique_events)
+hist(Unique_events$events, breaks=25, main='Average Events per Skater', xlab='Unique Events',
+     ylab='Number of Skaters')
+
+#Summary of Number of skaters for each event
+EventResultSingle_wr%>%group_by(season_start_year,event_code,category)%>%
+  summarize(count=n())%>%
+  ggplot(aes(x=season_start_year,y=count,fill=category))+
+  geom_bar(stat='identity',position=position_dodge())+facet_wrap(~event_code)
+
+EventResultSingle_wr%>%group_by(event_code,category)%>%summarize(n())
+
+```
+
+#Correlation Matrix
+We ran a correlation matrix of the component scores Free skating against component scores for Short Program. The purpose of this was to find which individual components were more correlated with the total score, and also which components were more correlated with each other. We wanted to see if there are certain components that correlate with the total score more, and recommend that skaters invest more time in improving those components. However, our results showed a high correlation with between all the components, indicating that all components are equally important for skaters. 
+
+```{r}
+x<-single_event%>%select(SS_FS:IN_FS,SS_SP:IN_SP)
+x<-na.omit(x)
+
+cor_matrix<-data.frame(cor(x))
+cov_matrix<-data.frame(cov(x))
+round(cor_matrix, digits=2)
+round(cov_matrix, digits=2)
+```
+
+
+#Linear Regression 
+In this section, we want to explore the associations between biography variables and each outcome of interest by using linear regression models stratified by sex. Biography variables include current age at event year, height, career length in years and category of country regarding the quintiles of number of sex-specific skaters. Outcomes are event total score, season best total score, season best score of short program and season best score of free skating.
+
+Before we built models, ggplots were used to visualize the associations. Univariate linear regression models were built for each combination of biography variables and outcomes. Since all the associations between single predictor and outcomes are statistically significant, we included them all in the final multivariate linear regression models. 
+
+##Linear Regression for Season Best Scores
+```{r,warning=FALSE}
+bsb<- seasonbestsingle_bio
+bsb %>% filter(is.na(name)==TRUE) %>% summarise(n())
+```
+
+Out of 7295 observations, there are 260 missing biography info. 
+
+```{r,warning=FALSE}
+##filter out observations with missing biography info
+bsb <- bsb %>% filter(is.na(name)==FALSE) 
+```
+
+####Part 1: season best total score  
+```{r,warning=FALSE}
+bsb_to<- bsb %>% filter(program_type=="to") 
+
+bsb_to %>% ggplot(aes(age,score,color=category))+geom_point()+
+  geom_smooth(method="lm")+facet_grid(.~category) + ggtitle('Association between Age and Total Score')
+bsb_to %>% group_by(category) %>% do(tidy(lm(score~ age,data= .),data= .)) 
+```
+
+For both ladies and men, age has a significantly positive relationship with season best total score.
+
+```{r,warning=FALSE}
+bsb_to %>% ggplot(aes(height,score,color=category))+ geom_point()+geom_smooth(method="lm")+
+  facet_grid(.~category) + ggtitle('Association between Height and Total Score')
+bsb_to %>% group_by(category) %>% do(tidy(lm(score~ height,data= .),data= .)) 
+```
+
+For both ladies and men, height has a significantly negative relationship with season best total score.
+
+```{r,warning=FALSE}
+bsb_to %>% ggplot(aes(career_length,score,color=category))+ geom_point()+geom_smooth(method="lm")+
+  facet_grid(.~category) + ggtitle('Association between Career Length and Total Score')
+bsb_to %>% group_by(category) %>% do(tidy(lm(score~ career_length,data= .),data= .))
+```
+
+For both ladies and men, career length has a significantly positive relationship with season best total score.
+
+```{r,warning=FALSE}
+bsb_to %>% ggplot(aes(num_quintile,score,color=category))+
+  geom_boxplot()+facet_grid(category~.) + ggtitle('Association between Country Rank and Total Score')
+bsb_to %>% group_by(category) %>% 
+  do(tidy(lm(score~ num_quintile,data= .),data= .)) 
+```
+
+Compared to skaters from country in the lowest quintile of number of skaters, skaters from country in higher quintile have greater season best total score.
+
+```{r,warning=FALSE}
+##Multivariate linear regression model for ladies
+fit_to_l<- bsb_to %>% filter(category=="l") %>% 
+  lm(score~ age+height+career_length+num_quintile, data= .)
+summary(fit_to_l)
+
+##Multivariate linear regression model for Men
+fit_to_m<- bsb_to %>% filter(category=="m") %>% 
+  lm(score~ age+height+career_length+num_quintile, data= .)
+summary(fit_to_m)
+```
+
+In the final multivariate models for men and ladies, each predictor still has statistically significant relationship with season best total score after adjusting the rest of the biography variables. Nearly 50% of the variance of season best total score can be explained by age, height, career length and country rank. 
+
+```{r,warning=FALSE}
+##Comparing the point estimate of coefficients with 95% conficence interval between sex. 
+fit_to<- bsb_to %>% group_by(category) %>% 
+  do(tidy(lm(score~ age+height+career_length+num_quintile, data= .), data= .))
+
+fit_to<- tbl_df(fit_to)
+
+fit_to %>% filter(term=="age") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+coord_fixed(ratio=1.5) + 
+  ggtitle('Estimate based on Age')+geom_hline(yintercept = 0)
+
+fit_to %>% filter(term=="height") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+coord_fixed(ratio=1.5) +
+  ggtitle('Estimate based on Height')+geom_hline(yintercept = 0)
+
+fit_to %>% filter(term=="career_length") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+
+  geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+
+  coord_fixed(ratio=1.5) + ggtitle('Estimate based on Career Length')+geom_hline(yintercept = 0)
+
+fit_to %>% filter(term%in%c("num_quintile20~40%","num_quintile40~60%",
+                         "num_quintile60~80%","num_quintile80~100%")) %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(category~.) + ggtitle('Estimate based on Country Rank')+geom_hline(yintercept = 0)
+```
+
+We can see the magnitude of the associations of age and height with season best total score varies by sex.
+
+####Part 2: season best score of short program
+
+```{r,warning=FALSE}
+bsb_sp<- bsb %>% filter(program_type=="sp") 
+
+bsb_sp %>% ggplot(aes(age,score,color=category))+geom_point()+
+  geom_smooth(method="lm")+facet_grid(.~category)+ 
+  ggtitle('Association between Age and SP Score')
+bsb_to %>% group_by(category) %>% do(tidy(lm(score~ age,data= .),data= .))
+```
+
+For both ladies and men, age has a significantly positive relationship with season best score of short program.
+
+```{r,warning=FALSE}
+bsb_sp %>% ggplot(aes(height,score,color=category))+
+  geom_point()+geom_smooth(method="lm")+facet_grid(.~category) +
+  ggtitle('Association between Height and SP score')
+bsb_sp %>% group_by(category) %>% do(tidy(lm(score~ height,data= .),data= .)) 
+```
+
+For both ladies and men, height has a significantly negative relationship with season best score of short program.
+
+```{r,warning=FALSE}
+bsb_sp %>% ggplot(aes(career_length,score,color=category))+
+  geom_point()+geom_smooth(method="lm")+facet_grid(.~category) +
+  ggtitle('Association between Career Length and SP Score')
+bsb_sp %>% group_by(category) %>% do(tidy(lm(score~ career_length,data= .),data= .)) 
+```
+
+For both ladies and men, career length has a significantly positive relationship with season best score of short program.
+
+```{r,warning=FALSE}
+bsb_sp %>% ggplot(aes(num_quintile,score,color=category))+
+  geom_boxplot()+facet_grid(category~.) + ggtitle('Association between Country Rank and SP Score')
+bsb_sp %>% group_by(category) %>% 
+  do(tidy(lm(score~ num_quintile,data= .),data= .)) 
+```
+
+Compared to skaters from country in the lowest quintile of number of skaters, skaters from country in higher quintile have greater season best score of short program.
+
+```{r,warning=FALSE}
+##Multivariate linear regression model for ladies
+fit_sp_l<- bsb_sp %>% filter(category=="l") %>% 
+  lm(score~ age+height+career_length+num_quintile, data= .)
+summary(fit_sp_l)
+
+##Multivariate linear regression model for Men
+fit_sp_m<- bsb_sp %>% filter(category=="m") %>% 
+  lm(score~ age+height+career_length+num_quintile, data= .)
+summary(fit_sp_m)
+```
+
+In the final multivariate models for men and ladies,nearly all the predictors still have statistically significant relationship with season best score of short program after adjusting the rest of the biography variables, except for the association of age with  the outcome among ladies. Around 50% of the variance of season best score of short program can be explained by age, height, career length and country rank.
+
+```{r,warning=FALSE}
+##Comparing the point estimate of coefficients with 95% conficence interval between sex.
+fit_sp<- bsb_sp %>% group_by(category) %>% 
+  do(tidy(lm(score~ age+height+career_length+num_quintile,data= .),data=.))
+
+fit_sp<- tbl_df(fit_sp)
+
+fit_sp %>% filter(term=="age") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+coord_fixed(ratio=1.5) +
+  ggtitle('SP Estimate based on Age')+geom_hline(yintercept = 0)
+
+fit_sp %>% filter(term=="height") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+coord_fixed(ratio=1.5) +
+  ggtitle('SP Estimate based on Height')+geom_hline(yintercept = 0)
+
+fit_sp %>% filter(term=="career_length") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+
+  geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+
+  coord_fixed(ratio=1.5) + ggtitle('SP Estimate based on Career Length')+geom_hline(yintercept = 0)
+
+fit_sp %>% filter(term%in%c("num_quintile20~40%","num_quintile40~60%",
+                         "num_quintile60~80%","num_quintile80~100%")) %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(category~.) +
+  ggtitle('SP Estimate based on Country Rank')+geom_hline(yintercept = 0)
+
+```
+
+We can see the magnitude of the associations of age with season best score of short program varies by sex.
+
+####Part 3: season best score of free skating
+```{r,warning=FALSE}
+bsb_fs<- bsb %>% filter(program_type=="fs") 
+
+bsb_fs %>% ggplot(aes(age,score,color=category))+
+  geom_point()+geom_smooth(method="lm")+facet_grid(.~category)+
+  ggtitle('Association between Age and FS Score')
+bsb_fs %>% group_by(category) %>% do(tidy(lm(score~ age,data= .),data= .)) 
+```
+
+For both ladies and men, age has a significantly positive relationship with season best score of free skating.
+
+```{r,warning=FALSE}
+bsb_fs %>% ggplot(aes(height,score,color=category))+
+  geom_point()+geom_smooth(method="lm")+facet_grid(.~category)+
+  ggtitle('Association between Height and FS Score')
+bsb_fs %>% group_by(category) %>% do(tidy(lm(score~ height,data= .),data= .)) 
+```
+
+For both ladies and men, height has a significantly negative relationship with season best score of free skating.
+
+```{r,warning=FALSE}
+bsb_fs %>% ggplot(aes(career_length,score,color=category))+
+  geom_point()+geom_smooth(method="lm")+facet_grid(.~category) +
+  ggtitle('Association between Career Length and FS Score')
+bsb_fs %>% group_by(category) %>% do(tidy(lm(score~ career_length,data= .),data= .))
+```
+
+For both ladies and men, career length has a significantly positive relationship with season best score of free skating.
+
+```{r,warning=FALSE}
+bsb_fs %>% ggplot(aes(num_quintile,score,color=category))+
+  geom_boxplot()+facet_grid(category~.) +
+  ggtitle('Association between Country Rank and FS Score')
+bsb_fs %>% group_by(category) %>% 
+  do(tidy(lm(score~ num_quintile,data= .),data= .)) 
+```
+
+Compared to skaters from country in the lowest quintile of number of skaters, skaters from country in higher quintile have greater season best score of short program.
+
+```{r,warning=FALSE}
+##Multivariate linear regression model for ladies
+fit_fs_l<- bsb_fs %>% filter(category=="l") %>% 
+  lm(score~ age+height+career_length+num_quintile, data= .)
+summary(fit_fs_l)
+
+##Multivariate linear regression model for men
+fit_fs_m<- bsb_fs %>% filter(category=="m") %>% 
+  lm(score~ age+height+career_length+num_quintile, data= .)
+summary(fit_fs_m)
+```
+
+In the final multivariate models for men and ladies,nearly all the predictors still have statistically significant relationship with season best score of free skating after adjusting the rest of the biography variables, except for the association of age with  the outcome among ladies. Around 50% of the variance of season best score of free skating can be explained by age, height, career length and country rank. 
+
+```{r,warning=FALSE}
+##Comparing the point estimate of coefficients with 95% conficence interval between sex.
+fit_fs<- bsb_fs %>% group_by(category) %>% 
+  do(tidy(lm(score~ age+height+career_length+num_quintile,data= .),data=.))
+
+fit_fs<- tbl_df(fit_fs)
+
+fit_fs %>% filter(term=="age") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+coord_fixed(ratio=1.5) +
+  ggtitle('FS Estimated based on Age')+geom_hline(yintercept = 0)
+
+fit_fs %>% filter(term=="height") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+coord_fixed(ratio=1.5) +
+  ggtitle('FS Estimated based on Height')+geom_hline(yintercept = 0)
+
+fit_fs %>% filter(term=="career_length") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+
+  geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+
+  facet_grid(.~category)+coord_fixed(ratio=1.5) +
+  ggtitle('FS Estimated based on Career Length')+geom_hline(yintercept = 0)
+
+fit_fs %>% filter(term%in%c("num_quintile20~40%","num_quintile40~60%",
+                         "num_quintile60~80%","num_quintile80~100%")) %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(category~.) +
+   ggtitle('FS Estimated based on Country Rank')+geom_hline(yintercept = 0)
+```
+
+We can see the magnitude of the associations of age with season best score of free skating varies by sex.
+
+##Linear Regression for Single Event Scores
+```{r,warning=FALSE}
+seb<- single_event_bio
+seb %>% filter(is.na(name)==TRUE) %>% summarise(n())
+```
+
+outof1392singles, there are 142 missing biography info.
+
+```{r,warning=FALSE}
+#Remove observations with missing biography
+seb<- seb %>% filter(is.na(name)==FALSE) 
+```
+
+In this part, we ran linear regression to explore the associations between biography variables and individual event total scores for male and female skaters. 
+
+```{r,warning=FALSE}
+seb %>% ggplot(aes(age,total,color=category))+geom_point()+
+  geom_smooth(method="lm")+facet_grid(.~category) +
+  ggtitle('Association between Age and Event Total Score')
+seb %>% group_by(category) %>% do(tidy(lm(total~ age,data= .),data= .)) 
+```
+
+Age has a significantly positive relationship with event total score for men only.
+
+```{r,warning=FALSE}
+seb %>% ggplot(aes(height,total,color=category))+
+  geom_point()+geom_smooth(method="lm")+facet_grid(.~category) +
+  ggtitle('Association between Height and Event Total Score')
+seb %>% group_by(category) %>% do(tidy(lm(total~ height,data= .),data= .)) 
+```
+
+Height has a significantly negative relationship with event total score for men. 
+
+```{r,warning=FALSE}
+seb %>% ggplot(aes(career_length,total,color=category))+
+  geom_point()+geom_smooth(method="lm")+
+  facet_grid(.~category) +
+  ggtitle('Association between Career Length and Event Total Score')
+seb %>% group_by(category) %>% do(tidy(lm(total~ career_length,data= .),data= .)) 
+```
+
+For both ladies and men, career length has a significantly positive relationship with event total score.
+
+```{r,warning=FALSE}
+seb %>% ggplot(aes(num_quintile,total,color=category))+
+  geom_boxplot()+facet_grid(category~.) +
+  ggtitle('Association between Country Rank and Event Total Score')
+seb %>% group_by(category) %>% 
+  do(tidy(lm(total~ num_quintile,data= .),data= .)) 
+```
+
+Compared to skaters from country in the lowest quintile of number of skaters, skaters from country in higher quintile have greater event total score.
+
+```{r,warning=FALSE}
+##Multivariate linear regression model for ladies
+fit_l<- seb %>% filter(category=="Ladies") %>% 
+  lm(total~ age+height+career_length+num_quintile, data= .)
+summary(fit_l)
+
+##Multivariate linear regression model for men
+fit_m<- seb %>% filter(category=="Men") %>% 
+  lm(total~ age+height+career_length+num_quintile, data= .)
+summary(fit_m)
+```
+
+In the final multivariate model for ladies, the association between age and event total score became statistically significant after adjusting the rest of the biography variables. These biography variables account for 36% of the variance of event total score, which is less than the 50% for explaining season best scores.
+
+In the final multivariate model for men, the associations of biography variables with event total score changed slightly after adjusting the rest of the biography variables, except for age became negatively associated with outcome. However, these biography variables can account only 28% of the variance of event total score for men, which is 8% less than the proportion explained by biography variables of ladies and is 20% less than the proportion for explaining season best scores among men.
+
+```{r,warning=FALSE}
+##Comparing the point estimate of coefficients with 95% conficence interval between sex.
+fit<- seb %>% group_by(category) %>% 
+  do(tidy(lm(total~ age+height+career_length+num_quintile,data= .),data=.))
+
+fit<- tbl_df(fit)
+
+fit %>% filter(term=="age") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+coord_fixed(ratio=1.5) +
+  ggtitle('Estimate of Event Total Score by Age')+geom_hline(yintercept = 0)
+
+##After adjusting for height,career_length and num_quintile, the association of age with total score became negative. 
+
+fit %>% filter(term=="height") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+coord_fixed(ratio=1.5) +
+  ggtitle('Estimate of Event Total Score by Height')+geom_hline(yintercept = 0)
+
+##After adjusting for height,career_length and num_quintile, the association of height with total score isn't statistically significant.
+
+fit %>% filter(term=="career_length") %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+
+  geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(.~category)+
+  coord_fixed(ratio=1.5) +
+  ggtitle('Estimate of Event Total Score by Career Length')+geom_hline(yintercept = 0)
+
+##After adjusting for height,career_length and num_quintile, the positive association of career length with total score is statistically significant.
+
+fit %>% filter(term%in%c("num_quintile20~40%","num_quintile40~60%",
+                         "num_quintile60~80%","num_quintile80~100%")) %>% 
+  mutate(ci_lower=estimate-1.96*std.error,ci_upper=estimate+1.96*std.error) %>%
+  ggplot(aes(x=term,y=estimate,color=category))+geom_point()+geom_errorbar(aes(ymax=ci_upper,ymin=ci_lower))+ facet_grid(category~.) + 
+  ggtitle('Estimate of Event Total Score by Country Rank')+geom_hline(yintercept = 0)
+```
+
+We can see the opposite direction of the associations of height with event total score comparing ladies to men. Taller skaters tend to score higher among ladies, however, shorter skaters are more likely to score higher among men, holding other variables constant. It is also interesting the note that holding career length constant, younger skaters tend to score higher for both ladies and men.
+
+
+#Machine Learning
+
+We predicted Season Best Scores (SBS) from different machine learning methods.
+
+Instead of predicting exact SBS, we would like to keep it simple by separating SBS into quartiles based on total score from 2015. Q1 is the highest scores while Q4 is the lowest. Our goal was be to predict 2015 quartile of Season Best Total Score correctly by using past scores and biography data.
+
+Due to sample size, we focused only on single men and single ladies. We looked at the predicitive models for men and ladies separately because their SBS distributions were very different, as discovered during exploratory analysis.
+
+The machine learning methods we examined were kmean, knn and LDA. For KNN and LDA, we trained with 80% of the data set and used 20% of the data as the test set. We evaluated the accuracy of the method by calculating percentage of data with predicted quartile, same as actual quartile for 2015 SBS. We applied 100 replications for each method.
+
+
+```{r,message=FALSE,warning=FALSE}
+library(cowplot)
+library(stringr)
+library(caret)
+library(dendextend)
+```
+
+
+First we reformated the table.
+```{r}
+cleaned.df <- seasonbestsingle_bio %>% 
+  mutate(UID = paste(name,category, sep="_")) %>%
+  mutate(UID = paste(UID,program_type, sep="_")) %>%
+  filter(!is.na(name))
+
+scorespread.df <-cleaned.df  %>%
+  filter(program_type == "to") %>%
+  select(UID, score, season_start_year) %>%
+  mutate(season_start_year = paste0("yr_",as.character(season_start_year))) %>%
+  #select(name, category, score, season_start_year) %>%
+  spread(season_start_year, score) %>%
+  filter(!is.na(yr_2015))
+
+info.df <- cleaned.df %>%
+  filter(season_start_year == 2015) %>%
+  mutate(countryQuintile_by_skaterNum = num_quintile) %>%
+  select(UID, first_name, last_name, age, career_length,countryQuintile_by_skaterNum, height, country, category, name) %>%
+  distinct()
+
+labels<- c("4th Q","3rd Q","2nd Q", "1st Q")
+
+scorespread.m.df <-
+  scorespread.df %>%
+  filter(str_sub(UID, start= -4) == "m_to")   %>%
+  mutate(SBS_2015_group =cut(yr_2015,
+                          breaks=quantile(yr_2015,prob=seq(0,1,0.25)),
+                          include.lowest=TRUE,
+                          labels=labels))
+
+scorespread.l.df <-
+  scorespread.df %>%
+  filter(str_sub(UID, start= -4) == "l_to")   %>%
+  mutate(SBS_2015_group =cut(yr_2015,
+                          breaks=quantile(yr_2015,prob=seq(0,1,0.25)),
+                          include.lowest=TRUE,
+                          labels=labels))
+
+scorespread.m.df <- scorespread.m.df %>%
+  left_join(info.df, by ="UID") 
+scorespread.l.df <- scorespread.l.df %>%
+  left_join(info.df, by ="UID") 
+
+
+scorespread.df<-bind_rows(scorespread.m.df,scorespread.l.df)
+
+
+rm(cleaned.df)
+
+```
+
+We then created a matrix with data to use for different machine learning methods.
+
+```{r}
+as.numeric.factor <- function(x) {seq_along(levels(x))[x]}
+
+formatMatrix <- function(df){
+  X <-
+    df %>%
+    select(-first_name,-last_name, -name, - SBS_2015_group, -yr_2015, -country, -UID) %>%
+    mutate(category = as.factor(category))
+  X[is.na(X)] <- 0
+  rownames(X) <-df$UID
+  return (X)
+}
+data.m.df <-formatMatrix(scorespread.m.df)
+data.l.df <-formatMatrix(scorespread.l.df)
+#X <- X %>%
+#mutate(category = as.numeric.factor(category)) %>%
+#mutate(countryQuintile_by_skaterNum = as.numeric.factor(countryQuintile_by_skaterNum))  
+
+```
+
+##Hierarchical clustering 
+```{r,warning=FALSE}
+#hierarchical clustering 
+
+## function to set label color
+labelCol <- function(x) {
+  if (is.leaf(x)) {
+    ## fetch label
+    label <- attr(x, "label")
+    code <- substr(label, 1, 1)
+    ## use the following line to reset the label to one letter code
+    # attr(x, "label") <- code
+    attr(x, "nodePar") <- list(lab.col=colorCodes[code])
+  }
+  return(x)
+}
+
+colorCodes <- c(A="red", B="green", C="blue", D="yellow")
+
+for( i in 1:2){
+  if (i == 1) {
+    data <-data.m.df 
+    rownames(data)<-str_replace(rownames(data), "_m_to","")
+    title <- "Hierarchical clustering  for men"
+    namesource.df <-scorespread.m.df
+  }
+  else {
+    data <-data.l.df
+    rownames(data)<-str_replace(rownames(data), "_l_to","")
+    title <- "Hierarchical clustering  for ladies"
+    namesource.df <-scorespread.l.df
+  }
+
+  data <- dist(data, method = c("euclidian"))
+  hcdata <- hclust(data, method = c("average"))
+  ## apply labelCol on all nodes of the dendrogram
+  dend <- as.dendrogram(hcdata)
+  name.df <- data.frame(labels(dend))
+  colnames(name.df)[1] <-"name"
+  code <- name.df %>%
+    left_join(namesource.df, by = "name") %>%
+    select(SBS_2015_group)
+  code <- code$SBS_2015_group
+  
+  code <- str_replace(code, "1st Q","red")
+  code <- str_replace(code, "2nd Q","green")
+  code <- str_replace(code, "3rd Q","blue")
+  code <- str_replace(code, "4th Q","black")
+  
+  dend %>% 
+    set("labels_cex", 0.4) %>%
+    set("labels_colors", code) %>% 
+    plot(main = title)
+
+}
+```
+
+Due to the number of samples, it is very hard to read the label, so we colored the label by SBS 2015 quartile . Each label is a name of a skater. Q1 skaters are in red, Q2 skaters are in green, Q3 skaters are in blue, and Q4 skaters are in black.
+
+From hierarchical clustering plot, for men we can see that Q1 skaters are grouped together at the far left corner and far right corner. Q4 skaters are in the middle. The separation between Q2 and Q3 are less obvious. 
+
+For ladies, Q1 skaters are grouped together at the far left corner and far right corner. The separation between Q2, Q3, and Q4 are less obvious. 
+
+Overall, hierarchical clustering identified the top performers of 2015 well, but did not identify other quartiles as clearly.
+
+##PCA
+```{r}
+#men
+data <- data.m.df %>%
+mutate(category = as.numeric.factor(category)) %>%
+mutate(countryQuintile_by_skaterNum = as.numeric.factor(countryQuintile_by_skaterNum))  
+
+pc.cr.m = prcomp(data)
+summary(pc.cr.m)
+
+#ladies
+data <- data.l.df %>%
+mutate(category = as.numeric.factor(category)) %>%
+mutate(countryQuintile_by_skaterNum = as.numeric.factor(countryQuintile_by_skaterNum))  
+
+pc.cr.l = prcomp(data)
+summary(pc.cr.l)
+
+```
+From PCA summary, for men, a total of 78.46% of the variation in the data is captured in the first two principle components. If we use the first 4 PCA components, we can capture 90.70% of variation in the data.
+For ladies, a total of 74.24% of the variation in the data is captured in the first two principle components. If we use the first 4 PCA components, we can capture 88.42% of the variation in the data.
+
+##k-mean clustering
+
+We created a helper function below to calculate accuracy for k-mean clustering.
+```{r,warning=FALSE}
+calculate.confusion <- function(states, clusters)
+  {
+    # generate a confusion matrix of cols C versus states S
+    d <- data.frame(state = states, cluster = clusters)
+    td <- as.data.frame(table(d))
+    # convert from raw counts to percentage of each label
+    pc <- matrix(ncol=max(clusters),nrow=0) # k cols
+    for (i in 1:4) # 4 labels
+    {
+        #i <-1
+      total <- sum(td[td$state==td$state[i],3])
+      pc <- rbind(pc, td[td$state==td$state[i],3]/total)
+    }
+    rownames(pc) <- td[1:4,1]
+    return(pc)
+  }
+  assign.cluster.labels <- function(cm, k)
+  {
+    # take the cluster label from the highest percentage in that column
+    cluster.labels <- list()
+    for (i in 1:k)
+    {
+      cluster.labels <- rbind(cluster.labels, row.names(cm)[match(max(cm[,i]), cm[,i])])
+    }
+  
+
+    return(cluster.labels)
+  }
+  calculate.accuracy <- function(states, clabels)
+  {
+    matching <- Map(function(state, labels) { state %in% labels }, states, clabels)
+    tf <- unlist(matching, use.names=FALSE)
+    return (sum(tf)/length(tf))
+  }
+  
+  
+  getKMeanAccuracy<- function(data, y, k){
+    
+    cl <- kmeans(data, centers=k)
+    conf.mat <- calculate.confusion(y, cl$cluster)
+    cluster.labels <- assign.cluster.labels(conf.mat,k)
+    acc <- calculate.accuracy(y, cluster.labels[cl$cluster])
+    return (acc)  
+  }
+  
+
+  
+```
+
+
+```{r,warning=FALSE}
+accuracy.kmean.df <- 
+  data.frame(
+            
+            category = character(),
+            k = integer(),
+            PCA = integer(),
+            accuracy = double(), 
+            sd = double(),
+            method = character()
+  )  
+for (i in 1:2) {
+  if (i == 1) {
+    pc.cr <- pc.cr.m
+    title.add <- "for men"
+    SBS_2015_group <-scorespread.m.df$SBS_2015_group
+    category <- "m"
+  }
+  else {
+     pc.cr <- pc.cr.l
+     title.add <- "for ladies"
+     SBS_2015_group <-scorespread.l.df$SBS_2015_group
+     category <- "l"
+  }
+  
+  data <-pc.cr$x[,1:2]
+  pca1 <-pc.cr$x[,1]
+  pca2 <-pc.cr$x[,2]
+  
+  # find optimal number of cluster for k means
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:15) wss[i] <- sum(kmeans(data,
+                                       centers=i)$withinss)
+  plot(1:15, wss, type="b", xlab="Number of Clusters",
+            ylab="Within groups sum of squares", main = paste("optimal k-mean cluster with first 2 PCA", title.add))
+  
+  data <-pc.cr$x[,1:4]
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:15) wss[i] <- sum(kmeans(data,
+                                       centers=i)$withinss)
+  plot(1:15, wss, type="b", xlab="Number of Clusters",
+       ylab="Within groups sum of squares", main = paste("optimal k-mean cluster with first 4 PCA", title.add))
+  
+  pc.df<-data.frame(PCA1=pca1, PCA2=pca2, SBS_2015_group=factor(SBS_2015_group))
+  print(ggplot(pc.df, aes(x=PCA1, y=PCA2,  color=SBS_2015_group)) + 
+    geom_point() + ggtitle(paste("SBS of 2015 using first 2 PCA",title.add)))
+  data <-pc.cr$x[,1:2]
+  cl <- kmeans(data, centers=4)
+  pc.df<-data.frame(PCA1=pca1, PCA2=pca2, Cluster=factor(cl$cluster))
+  print(ggplot(pc.df, aes(x=PCA1, y=PCA2,  color=Cluster)) + 
+    geom_point() + ggtitle(paste("kmean using first 2 PCA",title.add)))
+
+  data <-pc.cr$x[,1:4]
+  cl <- kmeans(data, centers=4)
+  pc.df<-data.frame(PCA1=pca1, PCA2=pca2, Cluster=factor(cl$cluster))
+  print(ggplot(pc.df, aes(x=PCA1, y=PCA2,  color=Cluster)) + 
+    geom_point() + ggtitle(paste("kmean using first 4 PCA",title.add)))
+  
+   for (p in 2:6){
+     data <-pc.cr$x[,1:p]
+     for (k in 4:10){
+       accuracy.kmean<-replicate(100,getKMeanAccuracy(data, SBS_2015_group, k))
+      new.df <- data.frame(category = category, k =k , PCA = p,accuracy= mean(accuracy.kmean),sd= sd(accuracy.kmean),method = "kmean")
+    accuracy.kmean.df <- bind_rows(accuracy.kmean.df, new.df)
+     }
+    #data <-pc.cr$x[,1:2]
+    #accuracy.kmean.pca2<-replicate(100,getKMeanAccuracy(data, SBS_2015_group, k))
+    #cat("For cluster =", k, ", kmean with using first 2 PCA acheive accuracy with mean = ", mean(accuracy.kmean.pca2), ", sd =",sd(accuracy.kmean.pca2), " ",title.add, "\n")
+    #data <-pc.cr$x[,1:4]
+    #accuracy.kmean.pca4<-replicate(100,getKMeanAccuracy(data, SBS_2015_group, k))
+    #cat("For cluster =", k, ", kmean with using first 4 PCA acheive accuracy with mean = ", mean(accuracy.kmean.pca4), ", sd =",sd(accuracy.kmean.pca4), " ",title.add, "\n")
+  }
+}
+  
+```
+
+
+```{r,warning=FALSE}
+accuracy.kmean.df%>%
+  ggplot(aes(x=k,y=accuracy))+
+  geom_boxplot(aes( group = k)) +
+  xlab("k")+
+  ggtitle("Kmean accuray")+ 
+  facet_wrap(~ category, scale = "free")
+
+accuracy.kmean.df%>%
+  ggplot(aes(x=PCA,y=accuracy))+
+  geom_boxplot(aes( group = PCA)) +
+  xlab("PCA")+
+  ggtitle("Kmean accuray")+ 
+  facet_wrap(~ category, scale = "free")
+
+do.call(rbind,lapply(split(accuracy.kmean.df,accuracy.kmean.df$category),function(chunk) chunk[which.max(chunk$accuracy),]))  
+```
+The table and graph above show the optimal k and PCA to use for knn.
+Around 50% was the optimal accuracy achieved.
+
+For men, if we used the first 2 PCA or first 4 PCA,  the optimal cluster is 5 or 6.
+For ladies, if we used the first 2 PCA or first 4 PCA,  the optimal cluster is 6.
+Since we divided SPB 2015 into quartiles, we used 4 as our cluster number, which is also close to the optimal k-mean cluster.
+
+Overall, kmean has higher accurarcy for ladies than for men. Increasing k helps to improve accuracy. But this is expected because we created more clusters and each cluster had a label of one of the quartiles. Increasing PCA does not always improve accuracy.
+
+##KNN
+
+```{r}
+library(class)
+
+
+getAccuracyForKNN <-function(X, k){
+  inTrain <- createDataPartition(y = X$SBS_2015_group, p=0.8)$Resample1
+  train <- slice(X, inTrain)
+  test <- slice(X, -inTrain)
+  train.class <- as.factor(train$SBS_2015_group)
+  test.class <- as.factor(test$SBS_2015_group)
+  train <- train %>% select(-SBS_2015_group)
+  test <- test %>% select(-SBS_2015_group)
+  #train <- train[, -ncol(train)]
+  #test <- test[, -ncol(test)]
+  test<-test%>%filter(complete.cases(.))
+  y_hat_knn <- knn(train = train,test =  test, cl = train.class, k = k, prob=FALSE)
+  acc <- mean(test.class==y_hat_knn)
+
+  return(acc)
+  
+}  
+  
+  
+```
+
+```{r,warning=FALSE}
+accuracy.knn.df <- 
+  data.frame(
+            
+            category = character(),
+            parameter = integer(),
+            accuracy = double(), 
+            sd = double(),
+            method = character()
+  )  
+  
+for ( i in 1:2){
+  if (i == 1) {
+    SBS_2015_group<- scorespread.m.df$SBS_2015_group
+    
+    X <- data.m.df
+    
+    title.add <- "for men"
+    category <- "m"
+  }else {
+    SBS_2015_group<- scorespread.l.df$SBS_2015_group
+     
+      X <- data.l.df
+     title.add <- "for ladies"
+   category <- "l"
+  }
+  X <- X %>%
+    mutate(category = as.numeric.factor(category)) %>%
+    mutate(countryQuintile_by_skaterNum = as.numeric.factor(countryQuintile_by_skaterNum))
+  X <- bind_cols(X,data.frame(SBS_2015_group))
+  
+
+  for (k in 1:10){
+    accuracy.knn<-replicate(100,getAccuracyForKNN(X, k))
+    #  cat("For  neighbor =", k, ", knn acheives accuracy with mean = ", mean(accuracy.knn), ", sd =",sd(accuracy.knn), " ",title.add, "\n")
+    new.df <- data.frame(category = category, parameter =k ,accuracy= mean(accuracy.knn),sd= sd(accuracy.knn),method = "knn")
+    accuracy.knn.df <- bind_rows(accuracy.knn.df, new.df)
+  }
+}
+```
+
+```{r,warning=FALSE}
+accuracy.knn.df%>%
+  ggplot(aes(parameter,accuracy))+
+  geom_point(aes(color=category)) +
+  xlab("number of neighbor") +
+  ggtitle("KNN accuray")
+
+do.call(rbind,lapply(split(accuracy.knn.df,accuracy.knn.df$category),function(chunk) chunk[which.max(chunk$accuracy),]))  
+  
+```
+The table and graph above show the optimal number of neighbor to use for knn.
+Knn has a higher accuracy to preduict SBS quartile for ladies then for men. 
+
+
+# LDA
+```{r,message=FALSE}
+library(MASS)
+
+getAccuracyForLDA <-function(X, k){
+  inTrain <- createDataPartition(y = X$SBS_2015_group, p=0.8)$Resample1
+  train <- slice(X, inTrain)
+  test <- slice(X, -inTrain)
+  train.class <- as.factor(train$SBS_2015_group)
+  test.class <- as.factor(test$SBS_2015_group)
+  train <- train %>% dplyr::select(-SBS_2015_group, -category)
+  test <- test %>% dplyr::select(-SBS_2015_group, -category)
+  #train <- train[, -ncol(train)]
+  #test <- test[, -ncol(test)]
+  
+  test<-test%>%filter(complete.cases(.))
+  
+  data.lda <- lda(train.class~.,
+                data=train)
+  #Project data on linear discriminants
+  data.lda.y_hat <- predict(data.lda, test)
+  
+  #Extract scaling for each predictor 
+  #data2.lda <- data.frame(varnames=rownames(coef(data.lda)), coef(data.lda))
+
+  acc <- mean(test.class==data.lda.y_hat$class)
+
+  return(acc)
+  
+}  
+```
+
+```{r,warning=FALSE}
+accuracy.lda.df <- 
+  data.frame(
+            
+            category = character(),
+            #parameter = integer(),
+            accuracy = double(), 
+            sd = double(),
+            method = character()
+  )  
+  
+for ( i in 1:2){
+  if (i == 1) {
+    SBS_2015_group<- scorespread.m.df$SBS_2015_group
+    
+    X <- data.m.df
+    
+    title.add <- "for men"
+    category <- "m"
+  }else {
+    SBS_2015_group<- scorespread.l.df$SBS_2015_group
+     
+      X <- data.l.df
+     title.add <- "for ladies"
+   category <- "l"
+  }
+  X <- X %>%
+    mutate(category = as.numeric.factor(category)) %>%
+    mutate(countryQuintile_by_skaterNum = as.numeric.factor(countryQuintile_by_skaterNum))
+  X <- bind_cols(X,data.frame(SBS_2015_group))
+  
+  accuracy.lda<-replicate(100,getAccuracyForLDA(X, k))
+      new.df <- data.frame(category = category ,accuracy= mean(accuracy.lda),sd= sd(accuracy.lda),method = "lda")
+      accuracy.lda.df <- bind_rows(accuracy.lda.df, new.df)
+}
+```
+
+```{r}
+do.call(rbind,lapply(split(accuracy.lda.df,accuracy.lda.df$category),function(chunk) chunk[which.max(chunk$accuracy),]))  
+  
+```
+The table and graph above show the optimal number of neighbors to use for LDA.
+LDA achieves the highest accuracy for ladies after 100 replications from using 20% of data as test set while KNN achieves the highest accuracy for men. Both have similar accuracy standard deviation of 6%.
+
+Each method has higher accuracy to predict  2015 SBS quartile for ladies than for men.
+
+The reason why the accuracy is not high can be that not all skater have every SBS score since 2008, ex. some skaters only started since 2012.
+
+In the future, we can try other machine learning method, like SVM.
